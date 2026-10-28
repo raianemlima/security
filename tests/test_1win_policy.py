@@ -54,4 +54,4 @@ def test_1win_report_profile_and_deduplication():
     assert report["findings"][0]["locations"] == [
         "https://1win.com/pt", "https://1win.com/pt/betting"
     ]
-    assert "Perfil de triagem: hackerone-1win" in findings_to_markdown(report)
+    assert "**Perfil de triagem:** hackerone-1win" in findings_to_markdown(report)

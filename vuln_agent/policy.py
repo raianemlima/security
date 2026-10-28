@@ -10,10 +10,23 @@ HEADER_TITLES = {
     "permissions-policy ausente",
     "cabeçalho hsts ausente",
 }
-SERVER_TITLES = {"cabeçalho server divulgado"}
+WEAK_HEADER_TITLES = {"content security policy permissiva", "hsts com configuração fraca"}
+SERVER_TITLES = {
+    "cabeçalho server divulgado",
+    "cabeçalho x-powered-by divulgado",
+    "cabeçalho x-aspnet-version divulgado",
+    "cabeçalho x-aspnetmvc-version divulgado",
+}
 FRAME_TITLES = {"proteção contra enquadramento não identificada"}
-CORS_TITLES = {"cors permite qualquer origem nesta resposta", "cors permissivo"}
+CORS_TITLES = {
+    "cors permite qualquer origem nesta resposta",
+    "cors permissivo",
+    "cors reflete origem arbitrária",
+    "cors confia na origem null com credenciais",
+}
 COOKIE_TITLES = {"atributos de cookie ausentes"}
+# Evidence from these sources is source code, never an HTTP header line.
+CODE_SOURCES = {"semgrep", "osv-scanner", "heurística local", "heurística javascript/typescript"}
 
 
 def _host_matches(host: str, domains: set[str]) -> bool:
@@ -34,58 +47,71 @@ def triage_finding(finding: dict, profile: str = "generic") -> dict:
     """Return a copy annotated with triage; never claims exploitability."""
     result = dict(finding)
     title = str(result.get("title", "")).strip().casefold()
-    evidence = str(result.get("evidence", "")).casefold()
+    # Evidence markers only count for non-code sources and at the start of the evidence (the
+    # format the web scanner emits); otherwise a code snippet containing e.g. "server:" would
+    # hide a real Semgrep finding as "not reportable".
+    source = str(result.get("source", "")).strip().casefold()
+    evidence = "" if source in CODE_SOURCES else str(result.get("evidence", "")).casefold().lstrip()
+    is_header = title in HEADER_TITLES or evidence.startswith("cabeçalho ausente:")
+    is_weak_header = title in WEAK_HEADER_TITLES
+    is_server = title in SERVER_TITLES or evidence.startswith("server:")
+    is_cors = title in CORS_TITLES or evidence.startswith("access-control-allow-origin: *")
+    is_frame = title in FRAME_TITLES or evidence.startswith("x-frame-options ausente")
+    is_cookie = title in COOKIE_TITLES
     status = "needs_manual_review"
     reason = "Indicador automatizado; valide o contexto e o impacto antes de reportar."
 
-    if title in HEADER_TITLES or "cabeçalho ausente:" in evidence:
+    if is_header:
         # Missing defensive headers are observations, not proof of exploitability.
         if title == "content security policy ausente" and result.get("severity") == "Medium":
             result["severity"] = "Low"
             result["severity_note"] = "Severidade reduzida: CSP ausente, isoladamente, não demonstra XSS ou impacto explorável."
         status = "needs_manual_review"
         reason = "Cabeçalho ausente é uma observação de hardening, não prova isolada de vulnerabilidade."
-    if title in SERVER_TITLES or "server:" in evidence:
+    if is_weak_header:
+        status = "needs_manual_review"
+        reason = "Configuração fraca de cabeçalho é uma observação de hardening; demonstre um vetor concreto antes de reportar."
+    if is_server:
         status = "not_reportable_as_is"
         reason = "Divulgação do cabeçalho Server, isoladamente, não demonstra impacto de segurança."
-    elif title in CORS_TITLES or "access-control-allow-origin: *" in evidence:
+    elif is_cors:
         status = "needs_impact_validation"
         reason = "CORS amplo pode ser intencional para conteúdo público; verifique dados sensíveis e comportamento com credenciais."
-    elif title in FRAME_TITLES or "x-frame-options ausente" in evidence:
+    elif is_frame:
         status = "needs_impact_validation"
         reason = "A ausência de proteção contra enquadramento não prova clickjacking; confirme ações sensíveis e impacto."
-    elif title in COOKIE_TITLES or "atributos ausentes:" in evidence:
+    elif is_cookie:
         status = "needs_manual_review"
         reason = "Atributos de cookie dependem da finalidade do cookie; a ausência isolada não demonstra comprometimento de sessão."
 
     if profile == "hackerone-bcny":
-        if title in HEADER_TITLES or "cabeçalho ausente:" in evidence:
+        if is_header or is_weak_header:
             status = "not_reportable_as_is"
             reason = "A triagem BCNY trata cabeçalhos ausentes sem impacto direto demonstrado como não reportáveis isoladamente."
-        elif title in SERVER_TITLES or "server:" in evidence:
+        elif is_server:
             status = "not_reportable_as_is"
             reason = "A triagem BCNY trata divulgação de banner/versão isolada como não reportável."
-        elif title in FRAME_TITLES or "x-frame-options ausente" in evidence:
+        elif is_frame:
             status = "needs_impact_validation"
             reason = "Clickjacking exige validação de ação sensível e impacto; o cabeçalho ausente isolado é insuficiente."
-        elif title in CORS_TITLES or "access-control-allow-origin: *" in evidence:
+        elif is_cors:
             status = "needs_impact_validation"
             reason = "É necessário demonstrar exposição de dados ou outro impacto; o cabeçalho isolado é insuficiente."
 
     if profile == "hackerone-1win":
-        if title in HEADER_TITLES or "cabeçalho ausente:" in evidence:
+        if is_header or is_weak_header:
             status = "not_reportable_as_is"
             reason = "A triagem 1win classifica ausência isolada de cabeçalhos de hardening como não reportável sem impacto demonstrado."
-        elif title in SERVER_TITLES or "server:" in evidence:
+        elif is_server:
             status = "not_reportable_as_is"
             reason = "Identificação genérica do servidor, sem impacto demonstrado, não constitui vulnerabilidade reportável por si só."
-        elif title in COOKIE_TITLES or "atributos ausentes:" in evidence:
+        elif is_cookie:
             status = "not_reportable_as_is"
             reason = "A ausência isolada de flags de cookie é hardening; só reavalie se houver impacto concreto demonstrado."
-        elif title in CORS_TITLES or "access-control-allow-origin: *" in evidence:
+        elif is_cors:
             status = "needs_impact_validation"
             reason = "CORS permissivo sem impacto demonstrado não basta; valide passivamente o contexto do recurso e não acesse dados de terceiros."
-        elif title in FRAME_TITLES or "x-frame-options ausente" in evidence:
+        elif is_frame:
             status = "needs_impact_validation"
             reason = "A ausência de proteção contra enquadramento não comprova clickjacking; seria necessário demonstrar impacto em ação sensível."
 
