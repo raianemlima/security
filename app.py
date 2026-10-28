@@ -5,6 +5,7 @@ import streamlit as st
 from dotenv import load_dotenv
 
 from vuln_agent.scanners import scan_code, scan_site, validate_site_url
+from vuln_agent.js_security import scan_javascript_patterns
 from vuln_agent.reporting import findings_to_markdown, make_report
 from vuln_agent.ai_review import explain_findings
 
@@ -21,6 +22,7 @@ with st.sidebar:
     st.write("Scanners disponíveis")
     st.write("Semgrep:", "✅" if __import__("shutil").which("semgrep") else "— não instalado")
     st.write("OSV-Scanner:", "✅" if __import__("shutil").which("osv-scanner") else "— não instalado")
+    st.write("Análise estática JS/TS:", "✅ integrada")
     st.write("IA:", "✅ configurada" if os.getenv("OPENAI_API_KEY") else "— opcional")
 
 if "last_report" not in st.session_state:
@@ -28,6 +30,7 @@ if "last_report" not in st.session_state:
 
 if mode == "Código / repositório":
     st.subheader("Analisar código")
+    st.caption("Inclui heurísticas passivas para bundles JavaScript/TypeScript: targetOrigin wildcard e possíveis fallbacks de origem. Achados exigem validação manual.")
     source = st.radio("Origem", ["Pasta local", "Upload ZIP"], horizontal=True)
     root = None
     temp_dir = None
@@ -43,6 +46,8 @@ if mode == "Código / repositório":
                 else:
                     with st.spinner("Executando verificações locais..."):
                         findings, meta = scan_code(p)
+                        findings.extend(scan_javascript_patterns(p))
+                        meta.setdefault("scanner_status", {})["javascript-static"] = "concluído"
                         st.session_state.last_report = make_report("code", str(p), findings, meta)
     else:
         uploaded = st.file_uploader("Envie um ZIP contendo o código", type=["zip"])
@@ -64,6 +69,8 @@ if mode == "Código / repositório":
                     scan_root = children[0] if len(children) == 1 and children[0].is_dir() else dest
                     with st.spinner("Executando verificações locais..."):
                         findings, meta = scan_code(scan_root)
+                        findings.extend(scan_javascript_patterns(scan_root))
+                        meta.setdefault("scanner_status", {})["javascript-static"] = "concluído"
                         st.session_state.last_report = make_report("code", uploaded.name, findings, meta)
                 except (zipfile.BadZipFile, ValueError, OSError) as e:
                     st.error(f"Não foi possível analisar o ZIP: {e}")
@@ -109,6 +116,8 @@ if report:
                     st.code(str(f["evidence"])[:5000])
                 if f.get("recommendation"):
                     st.write("**Correção sugerida:**", f["recommendation"])
+                if f.get("triage_status"):
+                    st.caption(f"Triagem: {f['triage_status']} — {f.get('triage_reason', '')}")
                 st.caption(f"Origem: {f.get('source','heurística')} • Confiança: {f.get('confidence','média')}")
     else:
         st.success("Nenhum achado foi produzido pelos verificadores executados. Isso não garante ausência de vulnerabilidades.")
