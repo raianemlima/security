@@ -6,6 +6,7 @@ MVP local com painel Streamlit, integração CI do GitHub Actions e scanners rea
 ## Recursos
 - Upload de ZIP ou análise de pasta local de código.
 - SAST com Semgrep (quando instalado) e verificação de dependências com OSV-Scanner (quando instalado).
+- Heurísticas estáticas para JavaScript/TypeScript, incluindo uso de `postMessage` com `targetOrigin: "*"` e possíveis fallbacks de origem com `document.referrer`. Esses sinais exigem revisão manual e não são prova automática de vulnerabilidade.
 - Verificação web passiva: HTTPS, cabeçalhos de segurança e cookies observáveis. Não explora falhas, não faz fuzzing e não tenta autenticação.
 - Relatórios JSON e Markdown.
 - Integração opcional com OpenAI API para explicar achados existentes; a IA não executa testes nem inventa evidências.
@@ -69,7 +70,7 @@ A chave não deve ser commitada. O módulo de IA envia somente os achados resumi
 ## Analisar código
 - Escolha “Pasta local” e informe o caminho absoluto para a pasta do repositório, ou
 - Escolha “Upload ZIP” e envie um arquivo ZIP de código.
-- O app executa verificações básicas próprias e os scanners instalados.
+- O app executa verificações básicas próprias, heurísticas JS/TS e os scanners instalados.
 - Faça revisão humana antes de tratar qualquer resultado como vulnerabilidade confirmada.
 
 ## Analisar site
@@ -88,6 +89,6 @@ Não coloque tokens pessoais ou chaves de API em arquivos versionados. Para auto
 
 ## Limitações do MVP
 - Não é uma auditoria completa nem certifica ausência de vulnerabilidades.
-- Verificações heurísticas podem gerar falsos positivos/negativos.
+- Verificações heurísticas podem gerar falsos positivos/negativos; mensagens com `targetOrigin: "*"` podem ser legítimas se não transportarem dados sensíveis.
 - Uploads ZIP são extraídos com proteção contra path traversal; ainda assim, use arquivos confiáveis.
 - A análise local não envia seu repositório para serviços externos, exceto se você habilitar ferramentas que se conectem a serviços próprios ou configurar IA (que recebe apenas resumos).
