@@ -6,7 +6,7 @@
     "codespaces": {
       "openFiles": [
         "README.md",
-        "tests/test_js_security.py"
+        "app.py"
       ]
     },
     "vscode": {
@@ -18,8 +18,11 @@
     }
   },
   "updateContentCommand": "[ -f packages.txt ] && sudo apt update && sudo apt upgrade -y && sudo xargs apt install -y <packages.txt; [ -f requirements.txt ] && pip3 install --user -r requirements.txt; pip3 install --user streamlit; echo '✅ Packages installed and Requirements met'",
+  // CORS/XSRF are relaxed only because Codespaces' authenticated port forwarding breaks Streamlit
+  // uploads otherwise. Keep the forwarded port private and never use these flags on a public server
+  // (.streamlit/config.toml keeps both protections on for every other run).
   "postAttachCommand": {
-    "server": "streamlit run tests/test_js_security.py --server.enableCORS false --server.enableXsrfProtection false"
+    "server": "streamlit run app.py --server.enableCORS false --server.enableXsrfProtection false"
   },
   "portsAttributes": {
     "8501": {

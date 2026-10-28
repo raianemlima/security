@@ -1,0 +1,10 @@
+# Secure defaults for the panel. Never commit .streamlit/secrets.toml (it is in .gitignore).
+[server]
+# Bounded upload size; ZIP content is additionally capped at 500 MB uncompressed.
+maxUploadSize = 100
+enableXsrfProtection = true
+enableCORS = true
+
+[browser]
+# Do not send usage telemetry from a security tool.
+gatherUsageStats = false
