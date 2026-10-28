@@ -80,3 +80,10 @@ def test_new_web_titles_are_triaged():
     assert reflected["triage_status"] == "needs_impact_validation"
     assert powered_by["triage_status"] == "not_reportable_as_is"
     assert weak_csp["triage_status"] == "not_reportable_as_is"
+
+
+def test_block_page_notice_is_never_reportable():
+    for profile in ("generic", "hackerone-1win", "hackerone-bcny"):
+        result = triage_finding({"title": "Resposta de bloqueio ou erro: cabeçalhos podem não representar o site",
+                                 "severity": "Info", "evidence": "HTTP 403; Server: cloudflare"}, profile)
+        assert result["triage_status"] == "not_reportable_as_is", profile

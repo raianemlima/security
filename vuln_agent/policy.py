@@ -25,6 +25,8 @@ CORS_TITLES = {
     "cors confia na origem null com credenciais",
 }
 COOKIE_TITLES = {"atributos de cookie ausentes"}
+# Notices about the quality of the scan itself, never vulnerabilities.
+NOTICE_TITLES = {"resposta de bloqueio ou erro: cabeçalhos podem não representar o site"}
 # Evidence from these sources is source code, never an HTTP header line.
 CODE_SOURCES = {"semgrep", "osv-scanner", "heurística local", "heurística javascript/typescript"}
 
@@ -114,6 +116,10 @@ def triage_finding(finding: dict, profile: str = "generic") -> dict:
         elif is_frame:
             status = "needs_impact_validation"
             reason = "A ausência de proteção contra enquadramento não comprova clickjacking; seria necessário demonstrar impacto em ação sensível."
+
+    if title in NOTICE_TITLES:
+        status = "not_reportable_as_is"
+        reason = "Aviso sobre a qualidade da análise, não uma vulnerabilidade: os cabeçalhos observados podem não ser os do site."
 
     result["triage_status"] = status
     result["triage_reason"] = reason

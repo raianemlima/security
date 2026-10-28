@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ipaddress
 import os
+import re
 import socket
 from urllib.parse import urljoin, urlparse
 
@@ -27,6 +28,23 @@ ORIGIN_PROBE = "https://vulnagent-origin-check.invalid"
 HSTS_MIN_MAX_AGE = 15_552_000  # 180 days
 _NAT64 = ipaddress.ip_network("64:ff9b::/96")
 _DISCLOSURE_HEADERS = ("Server", "X-Powered-By", "X-AspNet-Version", "X-AspNetMvc-Version")
+NON_REPRESENTATIVE_TITLE = "Resposta de bloqueio ou erro: cabeçalhos podem não representar o site"
+# (name, substring of the Server header, headers whose presence identifies the edge)
+_EDGE_SIGNATURES = (
+    ("Cloudflare", "cloudflare", ("cf-ray", "cf-mitigated")),
+    ("Akamai", "akamai", ("akamai-grn",)),
+    ("Amazon CloudFront", "cloudfront", ("x-amz-cf-id",)),
+    ("Imperva/Incapsula", "incapsula", ("x-iinfo",)),
+    ("Sucuri", "sucuri", ("x-sucuri-id",)),
+)
+# Identification headers must not carry credentials, override the CORS probe or break framing.
+MAX_EXTRA_HEADERS = 10
+MAX_EXTRA_HEADER_VALUE = 512
+_FORBIDDEN_EXTRA_HEADERS = frozenset({
+    "host", "origin", "cookie", "authorization", "proxy-authorization", "content-length",
+    "transfer-encoding", "connection", "keep-alive", "upgrade", "te", "trailer", "expect",
+})
+_HEADER_NAME = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,100}$")
 
 
 class UnsafeTargetError(ValueError):
@@ -147,6 +165,58 @@ def validate_site_url(url: str) -> str:
     return url
 
 
+def parse_extra_headers(raw) -> dict[str, str]:
+    """Parse ``Name: value`` lines (str or iterable) into identification headers.
+
+    Typical use: the identification header or User-Agent a bug bounty program asks
+    researchers to send. Credentials, Host/Origin and hop-by-hop headers are refused.
+    """
+    lines = raw.splitlines() if isinstance(raw, str) else list(raw or [])
+    headers: dict[str, str] = {}
+    for line in lines:
+        if not line.strip():
+            continue
+        name, sep, value = line.partition(":")
+        name, value = name.strip(), value.strip()
+        if not sep or not _HEADER_NAME.match(name):
+            raise ValueError(f"Cabeçalho inválido: {line.strip()[:80]!r}. Use o formato 'Nome: valor'.")
+        if name.lower() in _FORBIDDEN_EXTRA_HEADERS:
+            raise ValueError(f"O cabeçalho {name} não é permitido: a verificação é passiva e não envia "
+                             "credenciais nem altera Host/Origin.")
+        if len(value) > MAX_EXTRA_HEADER_VALUE or any((ord(c) < 32 and c != "\t") or ord(c) == 127 for c in value):
+            raise ValueError(f"Valor inválido para o cabeçalho {name}.")
+        headers[name] = value
+    if len(headers) > MAX_EXTRA_HEADERS:
+        raise ValueError(f"No máximo {MAX_EXTRA_HEADERS} cabeçalhos adicionais.")
+    return headers
+
+
+def extra_headers_from_env() -> dict[str, str]:
+    return parse_extra_headers(os.getenv("VULNAGENT_EXTRA_HEADERS", ""))
+
+
+def _edge_name(headers) -> str | None:
+    server = headers.get("Server", "").lower()
+    for name, server_marker, marker_headers in _EDGE_SIGNATURES:
+        if server_marker in server or any(h in headers for h in marker_headers):
+            return name
+    return None
+
+
+def _non_representative_reason(status: int, headers) -> str | None:
+    """Explain why the response is probably a block/error page rather than the site itself."""
+    mitigated = headers.get("cf-mitigated", "").strip()
+    if mitigated:
+        return f"o Cloudflare sinalizou a resposta como mitigada (cf-mitigated: {mitigated[:40]})"
+    if status < 400:
+        return None
+    edge = _edge_name(headers)
+    if edge and status in (401, 403, 406, 429, 503):
+        return (f"HTTP {status} entregue por {edge}: provável bloqueio do WAF, verificação anti-bot "
+                "ou restrição geográfica")
+    return f"HTTP {status}: página de erro" + (f" entregue por {edge}" if edge else "")
+
+
 def _http_timeout() -> float:
     try:
         value = float(os.getenv("HTTP_TIMEOUT", "8"))
@@ -209,19 +279,23 @@ def _cookie_issues(cookie: str, is_https: bool) -> tuple[str, list[str]]:
     return name, missing
 
 
-def scan_site(url: str):
+def scan_site(url: str, extra_headers: dict[str, str] | None = None):
     findings = []
     meta = {"scanner_status": {"web": "concluído"}, "notes": [
-        "Verificação passiva de página inicial; não é um teste de penetração.",
+        "Verificação passiva da URL informada; não é um teste de penetração.",
         "Redirecionamentos são desativados para evitar sair do host fornecido.",
         f"A requisição envia o cabeçalho Origin: {ORIGIN_PROBE} para detectar reflexão de CORS.",
     ]}
+    request_headers = {"User-Agent": USER_AGENT, **(extra_headers or {}), "Origin": ORIGIN_PROBE}
+    if extra_headers:
+        # Names only: values (e.g. a researcher handle) stay out of shared reports.
+        meta["notes"].append("Cabeçalhos adicionais enviados: " + ", ".join(sorted(extra_headers)) + ".")
     is_https = urlparse(url).scheme == "https"
     session = public_only_session()
     try:
         try:
             resp = session.get(url, timeout=_http_timeout(), allow_redirects=False, stream=True,
-                               headers={"User-Agent": USER_AGENT, "Origin": ORIGIN_PROBE})
+                               headers=request_headers)
         except requests.exceptions.SSLError as exc:
             findings.append(make_finding(
                 "Certificado TLS inválido ou não confiável", "High",
@@ -248,10 +322,26 @@ def _analyse_response(url, resp, is_https, meta):
     meta["http_status"] = status
     meta["final_url"] = resp.url
     is_redirect = 300 <= status < 400
+    block_reason = _non_representative_reason(status, headers)
+    meta["response_representative"] = block_reason is None
 
     def add(title, severity, description, evidence, recommendation, rule_id, confidence="alta"):
         findings.append(make_finding(title, severity, description, url, evidence, recommendation,
                                      "verificação HTTP", confidence, rule_id=rule_id))
+
+    if block_reason:
+        evidence = [f"HTTP {status}"] + [f"{h}: {headers[h][:100]}" for h in ("Server", "cf-mitigated", "cf-ray")
+                                         if h in headers]
+        add(NON_REPRESENTATIVE_TITLE, "Info",
+            f"A resposta não parece ser a página real ({block_reason}). Os achados de cabeçalho abaixo "
+            "descrevem esta resposta e podem não valer para o site; eles foram marcados com confiança baixa.",
+            "; ".join(evidence),
+            "Abra a URL num navegador e confira os cabeçalhos da resposta 200 (DevTools → Network). Se o "
+            "bloqueio vier do scanner, verifique se o programa exige um cabeçalho de identificação e "
+            "configure-o (VULNAGENT_EXTRA_HEADERS, campo no painel ou --header na CLI).",
+            "web.non-representative-response")
+        findings[-1]["is_notice"] = True
+        meta["notes"].append(f"Resposta não representativa ({block_reason}); reavalie os cabeçalhos na resposta 200.")
 
     if is_redirect:
         location = headers.get("Location", "")
@@ -334,12 +424,20 @@ def _analyse_response(url, resp, is_https, meta):
             "Access-Control-Allow-Origin: *",
             "Confirme que a resposta não contém dados sensíveis ou restrinja às origens necessárias.", "web.cors-wildcard")
     elif acao == ORIGIN_PROBE:
-        add("CORS reflete origem arbitrária", "Medium" if credentials else "Low",
-            "O servidor devolveu no Access-Control-Allow-Origin a origem fictícia enviada pelo scanner. "
-            + ("Com credenciais habilitadas, sites de terceiros podem ler respostas autenticadas."
-               if credentials else "Sem credenciais, o impacto depende de a resposta conter dados não públicos."),
+        if credentials:
+            severity, impact = "Medium", "Com credenciais habilitadas, sites de terceiros podem ler respostas autenticadas."
+        elif block_reason:
+            severity, impact = "Info", (
+                "A reflexão apareceu numa resposta de bloqueio/erro e sem Access-Control-Allow-Credentials: "
+                "isoladamente, não permite ler dados autenticados. Só há bug se um endpoint com dados da conta "
+                "refletir a origem e também retornar Access-Control-Allow-Credentials: true.")
+        else:
+            severity, impact = "Low", "Sem credenciais, o impacto depende de a resposta conter dados não públicos."
+        add("CORS reflete origem arbitrária", severity,
+            "O servidor devolveu no Access-Control-Allow-Origin a origem fictícia enviada pelo scanner. " + impact,
             cors_evidence,
-            "Valide a origem contra uma allowlist exata; nunca reflita o cabeçalho Origin recebido.",
+            "Valide a origem contra uma allowlist exata; nunca reflita o cabeçalho Origin recebido. Para validar "
+            "impacto, use apenas a sua própria conta.",
             "web.cors-origin-reflection")
     elif acao == "null" and credentials:
         add("CORS confia na origem null com credenciais", "Medium",
@@ -364,4 +462,11 @@ def _analyse_response(url, resp, is_https, meta):
                 f"{name}; atributos ausentes: {', '.join(missing)}",
                 "Avalie Secure, HttpOnly e SameSite conforme a finalidade do cookie.",
                 "web.cookie-attributes", confidence="média")
+
+    if block_reason:
+        for finding in findings:
+            if finding.get("rule_id") in ("web.non-representative-response", "web.plain-http"):
+                continue
+            finding["confidence"] = "baixa (resposta de bloqueio/erro)"
+            finding["description"] += f" Observado em resposta HTTP {status}; reavalie na resposta 200 da página."
     return findings
