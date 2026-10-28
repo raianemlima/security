@@ -15,12 +15,24 @@ from urllib.parse import urljoin, urlparse
 
 import requests
 from requests.adapters import HTTPAdapter
-from urllib3.connection import HTTPConnection, HTTPSConnection
-from urllib3.connectionpool import HTTPConnectionPool, HTTPSConnectionPool
-from urllib3.exceptions import ConnectTimeoutError, NameResolutionError, NewConnectionError
-from urllib3.util import connection as urllib3_connection
 
 from vuln_agent.findings import make_finding
+
+# The SSRF guard subclasses urllib3 2.x connection internals. Import them defensively so that a
+# deployment with an older/unexpected urllib3 does not break the whole module (and the app): only
+# the site scan requires them, and it raises a clear error if they are missing.
+try:
+    from urllib3.connection import HTTPConnection, HTTPSConnection
+    from urllib3.connectionpool import HTTPConnectionPool, HTTPSConnectionPool
+    from urllib3.exceptions import ConnectTimeoutError, NewConnectionError
+    from urllib3.util import connection as urllib3_connection
+    try:
+        from urllib3.exceptions import NameResolutionError  # urllib3 >= 2.0
+    except ImportError:  # pragma: no cover - old urllib3
+        NameResolutionError = NewConnectionError
+    _URLLIB3_IMPORT_ERROR: Exception | None = None
+except Exception as _exc:  # pragma: no cover - depends on the deployed urllib3
+    _URLLIB3_IMPORT_ERROR = _exc
 
 USER_AGENT = "VulnAgent-DefensiveScanner/0.2 (passive; authorized use only)"
 # A non-resolvable origin (RFC 2606 .invalid): it only reveals whether the server reflects it.
@@ -81,51 +93,51 @@ def public_addresses(host: str, port: int) -> list[str]:
     return addresses
 
 
-class _PublicOnlyConnectionMixin:
-    """Replace urllib3's resolver+connect step with a validated, pinned one."""
+if _URLLIB3_IMPORT_ERROR is None:
+    class _PublicOnlyConnectionMixin:
+        """Replace urllib3's resolver+connect step with a validated, pinned one."""
 
-    def _new_conn(self):
-        try:
-            addresses = public_addresses(self._dns_host, self.port)
-        except socket.gaierror as exc:
-            raise NameResolutionError(self.host, self, exc) from exc
-        error = None
-        for address in addresses:
+        def _new_conn(self):
             try:
-                return urllib3_connection.create_connection(
-                    (address, self.port), self.timeout,
-                    source_address=self.source_address, socket_options=self.socket_options)
-            except TimeoutError as exc:
-                error = ConnectTimeoutError(self, f"Conexão com {self.host} expirou ({exc}).")
-            except OSError as exc:
-                error = NewConnectionError(self, f"Falha ao conectar em {self.host}: {exc}")
-        raise error
+                addresses = public_addresses(self._dns_host, self.port)
+            except socket.gaierror as exc:
+                raise NameResolutionError(self.host, self, exc) from exc
+            error = None
+            for address in addresses:
+                try:
+                    return urllib3_connection.create_connection(
+                        (address, self.port), self.timeout,
+                        source_address=self.source_address, socket_options=self.socket_options)
+                except TimeoutError as exc:
+                    error = ConnectTimeoutError(self, f"Conexão com {self.host} expirou ({exc}).")
+                except OSError as exc:
+                    error = NewConnectionError(self, f"Falha ao conectar em {self.host}: {exc}")
+            raise error
 
+    class _PublicHTTPConnection(_PublicOnlyConnectionMixin, HTTPConnection):
+        pass
 
-class _PublicHTTPConnection(_PublicOnlyConnectionMixin, HTTPConnection):
-    pass
+    class _PublicHTTPSConnection(_PublicOnlyConnectionMixin, HTTPSConnection):
+        pass
 
+    class _PublicHTTPConnectionPool(HTTPConnectionPool):
+        ConnectionCls = _PublicHTTPConnection
 
-class _PublicHTTPSConnection(_PublicOnlyConnectionMixin, HTTPSConnection):
-    pass
+    class _PublicHTTPSConnectionPool(HTTPSConnectionPool):
+        ConnectionCls = _PublicHTTPSConnection
 
-
-class _PublicHTTPConnectionPool(HTTPConnectionPool):
-    ConnectionCls = _PublicHTTPConnection
-
-
-class _PublicHTTPSConnectionPool(HTTPSConnectionPool):
-    ConnectionCls = _PublicHTTPSConnection
-
-
-class PublicOnlyAdapter(HTTPAdapter):
-    def init_poolmanager(self, *args, **kwargs):
-        super().init_poolmanager(*args, **kwargs)
-        self.poolmanager.pool_classes_by_scheme = {
-            "http": _PublicHTTPConnectionPool, "https": _PublicHTTPSConnectionPool}
+    class PublicOnlyAdapter(HTTPAdapter):
+        def init_poolmanager(self, *args, **kwargs):
+            super().init_poolmanager(*args, **kwargs)
+            self.poolmanager.pool_classes_by_scheme = {
+                "http": _PublicHTTPConnectionPool, "https": _PublicHTTPSConnectionPool}
 
 
 def public_only_session() -> requests.Session:
+    if _URLLIB3_IMPORT_ERROR is not None:
+        raise RuntimeError(
+            "A verificação de site requer urllib3>=2.0 (proteção contra SSRF). Instale as "
+            f"dependências do requirements.txt. Detalhe do import: {_URLLIB3_IMPORT_ERROR}")
     session = requests.Session()
     # Ignore environment proxies (they would resolve the host themselves and bypass the
     # IP check) and ~/.netrc (credentials must never be sent to a scanned site).
