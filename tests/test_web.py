@@ -147,3 +147,70 @@ def test_weak_hsts_and_csp_parsing_helpers():
     csp = web._parse_csp("script-src 'self' 'nonce-abc' 'unsafe-inline'; object-src 'none'")
     assert web._csp_weaknesses(csp) == []  # nonces make browsers ignore 'unsafe-inline'
     assert web._csp_weaknesses(web._parse_csp("img-src *")) == ["sem script-src/default-src: scripts não são restringidos"]
+
+
+def test_block_page_like_the_1win_report_is_flagged_and_downgraded(local_site):
+    # Reproduces the shape of a real report: a Cloudflare 403 with no security headers and CORS reflection.
+    handler, url = local_site
+    handler.status = 403
+    handler.headers_to_send = [
+        ("Content-Type", "text/html; charset=UTF-8"),
+        ("Server", "cloudflare"),
+        ("CF-RAY", "8d1f2e3a4b5c6d7e-GRU"),
+        ("Access-Control-Allow-Origin", "{origin}"),
+    ]
+    findings, meta = scan_site(url)
+    by_title = {f["title"]: f for f in findings}
+    notice = by_title[web.NON_REPRESENTATIVE_TITLE]
+    assert notice["severity"] == "Info"
+    assert "Cloudflare" in notice["description"] and "HTTP 403" in notice["evidence"]
+    assert meta["response_representative"] is False
+    cors = by_title["CORS reflete origem arbitrária"]
+    assert cors["severity"] == "Info"
+    assert "bloqueio" in cors["description"]
+    for title in ("Content Security Policy ausente", "Cabeçalho Server divulgado", "CORS reflete origem arbitrária"):
+        assert by_title[title]["confidence"].startswith("baixa"), title
+        assert "reavalie na resposta 200" in by_title[title]["description"]
+    # The scheme finding does not depend on the response, so it keeps full confidence.
+    assert by_title["Site acessado por HTTP"]["confidence"] == "alta"
+
+
+def test_plain_error_page_without_waf_is_flagged(local_site):
+    handler, url = local_site
+    handler.status = 404
+    findings, _meta = scan_site(url)
+    notice = next(f for f in findings if f["title"] == web.NON_REPRESENTATIVE_TITLE)
+    assert "HTTP 404: página de erro" in notice["description"]
+
+
+def test_normal_page_has_no_block_notice(local_site):
+    handler, url = local_site
+    findings, meta = scan_site(url)
+    assert meta["response_representative"] is True
+    assert all(f["title"] != web.NON_REPRESENTATIVE_TITLE for f in findings)
+    assert all(not f["confidence"].startswith("baixa") for f in findings)
+
+
+def test_identification_headers_are_sent_but_never_override_the_probe(local_site):
+    handler, url = local_site
+    _findings, meta = scan_site(url, {"X-HackerOne-Research": "alice", "User-Agent": "VulnAgent (h1: alice)"})
+    received = handler.hits[0]
+    assert received["X-HackerOne-Research"] == "alice"
+    assert received["User-Agent"] == "VulnAgent (h1: alice)"
+    assert received["Origin"] == web.ORIGIN_PROBE
+    notes = " ".join(meta["notes"])
+    assert "User-Agent, X-HackerOne-Research" in notes and "alice" not in notes
+
+
+def test_parse_extra_headers():
+    assert web.parse_extra_headers("X-HackerOne-Research: alice\n\nUser-Agent: Mozilla/5.0 (X11; Linux) h1:alice") == {
+        "X-HackerOne-Research": "alice", "User-Agent": "Mozilla/5.0 (X11; Linux) h1:alice"}
+    assert web.parse_extra_headers("") == {}
+    for bad in ("Cookie: session=1", "authorization: Bearer x", "Origin: https://evil.example", "host: x",
+                "Bad Header: x", "sem dois pontos"):
+        with pytest.raises(ValueError):
+            web.parse_extra_headers(bad)
+    with pytest.raises(ValueError):  # header injection through a list item
+        web.parse_extra_headers(["X-Test: ok\r\nCookie: stolen=1"])
+    with pytest.raises(ValueError):
+        web.parse_extra_headers([f"X-H{i}: v" for i in range(web.MAX_EXTRA_HEADERS + 1)])

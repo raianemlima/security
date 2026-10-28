@@ -44,3 +44,12 @@ def test_local_folder_option_can_be_disabled(monkeypatch):
     at = AppTest.from_file(APP, default_timeout=30).run()
     origin = next(r for r in at.radio if r.label == "Origem")
     assert origin.options == ["Upload ZIP"]
+
+
+def test_site_mode_rejects_credential_headers_before_any_request():
+    at = AppTest.from_file(APP, default_timeout=30).run()
+    at.sidebar.radio[0].set_value("Site web").run()
+    at.text_input[0].input("https://example.com/")
+    at.text_area[0].input("Authorization: Bearer abc")
+    at.button[0].click().run()
+    assert "Authorization não é permitido" in at.error[0].value

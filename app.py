@@ -7,6 +7,7 @@ from vuln_agent.ai_review import explain_findings
 from vuln_agent.analysis import analyze_code, analyze_site
 from vuln_agent.inputs import allowed_roots_from_env, local_path_enabled, pick_scan_root, resolve_local_path, safe_extract_zip
 from vuln_agent.reporting import SEVERITY_ORDER, findings_to_markdown, findings_to_sarif, severity_counts
+from vuln_agent.web import parse_extra_headers
 
 load_dotenv()
 st.set_page_config(page_title="VulnAgent", page_icon="🛡️", layout="wide")
@@ -35,6 +36,7 @@ with st.sidebar:
     st.write("Semgrep:", "✅" if shutil.which("semgrep") else "— não instalado")
     st.write("OSV-Scanner:", "✅" if shutil.which("osv-scanner") else "— não instalado")
     st.write("Análise estática JS/TS:", "✅ integrada")
+    st.write("Análise estática Solana/Anchor:", "✅ integrada")
     st.write("Detecção de segredos:", "✅ integrada (valores mascarados)")
     st.write("IA:", "✅ configurada" if os.getenv("OPENAI_API_KEY") else "— opcional")
 
@@ -43,7 +45,7 @@ if "last_report" not in st.session_state:
 
 if mode == "Código / repositório":
     st.subheader("Analisar código")
-    st.caption("Inclui heurísticas passivas para bundles JavaScript/TypeScript: targetOrigin wildcard, listeners de mensagem sem verificação de origem e possíveis fallbacks de origem. Achados exigem validação manual.")
+    st.caption("Inclui heurísticas passivas para JavaScript/TypeScript (targetOrigin wildcard, listeners de mensagem sem verificação de origem) e para programas Solana/Anchor em Rust (signatário/autoridade, contas não verificadas, PDA sem bump, CPI, aritmética, init/close). Achados exigem validação manual.")
     sources = ["Pasta local", "Upload ZIP"] if local_path_enabled() else ["Upload ZIP"]
     source = st.radio("Origem", sources, horizontal=True)
     if source == "Pasta local":
@@ -75,11 +77,17 @@ if mode == "Código / repositório":
 else:
     st.subheader("Verificação passiva de site")
     url = st.text_input("URL do site autorizado", placeholder="https://meu-dominio.example")
-    st.info("A análise faz uma única requisição GET à página inicial, sem seguir redirecionamentos, e verifica TLS, cabeçalhos, CORS e cookies. Não executa exploração.")
+    extra_headers_text = st.text_area(
+        "Cabeçalhos de identificação (opcional, um por linha)",
+        value=os.getenv("VULNAGENT_EXTRA_HEADERS", ""),
+        placeholder="X-HackerOne-Research: seu_usuario",
+        help="Use quando o programa exigir que pesquisadores se identifiquem. Credenciais (Cookie, Authorization) e Host/Origin não são aceitos.")
+    st.info("A análise faz uma única requisição GET à URL informada, sem seguir redirecionamentos, e verifica TLS, cabeçalhos, CORS e cookies. Não executa exploração.")
     if st.button("Verificar site", type="primary"):
         try:
+            extra_headers = parse_extra_headers(extra_headers_text)
             with st.spinner("Verificando resposta HTTP e cabeçalhos..."):
-                set_report(analyze_site(url))
+                set_report(analyze_site(url, extra_headers))
         except Exception as e:
             st.error(f"Não foi possível executar a verificação: {e}")
 
@@ -95,6 +103,8 @@ if report:
     c3.metric("Média", counts.get("Medium", 0))
     c4.metric("Baixa / Info", counts.get("Low", 0) + counts.get("Info", 0))
     st.caption("Os resultados são indicadores para revisão, não confirmação automática de explorabilidade.")
+    for notice in (f for f in findings if f.get("is_notice")):
+        st.warning(f"**{notice['title']}.** {notice['description']}\n\n{notice['recommendation']}")
     with st.expander("Status dos scanners e metadados"):
         st.json(report.get("metadata", {}))
     if findings:

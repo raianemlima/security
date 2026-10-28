@@ -53,3 +53,11 @@ def test_sarif_export():
     ]
     assert run["results"][1]["locations"][0]["physicalLocation"] == {"artifactLocation": {"uri": "https://example.com:8443"}}
     assert run["tool"]["driver"]["rules"][0]["properties"]["security-severity"] == "8.0"
+
+def test_notices_are_listed_before_findings():
+    report = make_report("site", "https://example.com", [
+        {"title": "a", "severity": "High"},
+        {"title": "Resposta de bloqueio ou erro: cabeçalhos podem não representar o site", "severity": "Info",
+         "is_notice": True},
+    ], {})
+    assert report["findings"][0]["is_notice"] is True

@@ -32,7 +32,8 @@ def make_report(target_type, target, findings, meta):
     redacted = [dict(f, evidence=redact_text(str(f["evidence"]))) if f.get("evidence") else dict(f)
                 for f in findings]
     triaged = triage_findings(redacted, profile)
-    triaged.sort(key=lambda f: severity_rank(f.get("severity")))
+    # Notices qualify every other finding (e.g. "this was a WAF block page"), so they come first.
+    triaged.sort(key=lambda f: (not f.get("is_notice"), severity_rank(f.get("severity"))))
     triage_counts = {}
     for finding in triaged:
         status = finding.get("triage_status", "needs_manual_review")

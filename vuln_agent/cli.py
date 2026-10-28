@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 from vuln_agent.analysis import analyze_code, analyze_site
 from vuln_agent.inputs import pick_scan_root, resolve_local_path, safe_extract_zip
 from vuln_agent.reporting import findings_to_markdown, findings_to_sarif, severity_rank
+from vuln_agent.web import extra_headers_from_env, parse_extra_headers
 
 FAIL_LEVELS = {"none": None, "critical": "Critical", "high": "High", "medium": "Medium", "low": "Low", "info": "Info"}
 
@@ -26,6 +27,9 @@ def build_parser() -> argparse.ArgumentParser:
     code.add_argument("path", help="Pasta do repositório ou arquivo .zip")
     site = sub.add_parser("site", help="Verificação web passiva de uma URL autorizada.")
     site.add_argument("url")
+    site.add_argument("-H", "--header", action="append", default=[], metavar="'Nome: valor'",
+                      help="Cabeçalho de identificação exigido pelo programa (repetível). "
+                           "Padrão: VULNAGENT_EXTRA_HEADERS.")
     for command in (code, site):
         command.add_argument("-f", "--format", choices=("markdown", "json", "sarif"), default="markdown")
         command.add_argument("-o", "--output", help="Arquivo de saída (padrão: saída padrão).")
@@ -64,7 +68,11 @@ def main(argv: list[str] | None = None) -> int:
     load_dotenv()
     args = build_parser().parse_args(argv)
     try:
-        report = _analyze_code_path(Path(args.path)) if args.command == "code" else analyze_site(args.url)
+        if args.command == "code":
+            report = _analyze_code_path(Path(args.path))
+        else:
+            headers = parse_extra_headers(args.header) if args.header else extra_headers_from_env()
+            report = analyze_site(args.url, headers)
     except (ValueError, RuntimeError, OSError, zipfile.BadZipFile) as exc:
         print(f"erro: {exc}", file=sys.stderr)
         return 2

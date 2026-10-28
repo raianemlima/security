@@ -51,3 +51,8 @@ def test_errors_exit_with_code_2(tmp_path, capsys):
     assert main(["code", str(tmp_path / "missing")]) == 2
     assert main(["site", "http://127.0.0.1/"]) == 2
     assert "erro:" in capsys.readouterr().err
+
+
+def test_site_rejects_forbidden_identification_header(capsys):
+    assert main(["site", "https://example.com/", "-H", "Cookie: session=1"]) == 2
+    assert "Cookie" in capsys.readouterr().err
