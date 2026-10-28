@@ -9,6 +9,7 @@ MVP local com painel Streamlit, integração CI do GitHub Actions e scanners rea
 - Regras próprias com `rule_id`: eval, SQL montado por concatenação/f-string/`%` (consultas parametrizadas **não** são sinalizadas), innerHTML/`dangerouslySetInnerHTML`/`document.write`, `new Function`, `shell=True`/`os.system`, desserialização insegura (pickle, `yaml.load` sem SafeLoader), JWT sem verificação, TLS desativado, MD5/SHA-1, debug e CORS amplo.
 - Detecção de segredos (AWS, GitHub, Slack, Stripe, OpenAI, Anthropic, Google, JWT, chaves privadas, atribuições como `SECRET_KEY = "..."`) e de arquivos `.env`/`.env.*`. **Os valores são sempre mascarados** no painel, nos relatórios e no que vai para a IA.
 - Heurísticas estáticas para JavaScript/TypeScript: `postMessage` com `targetOrigin: "*"`, listeners de `message` sem verificação de `event.origin` e possíveis fallbacks de origem com `document.referrer`. Esses sinais exigem revisão manual e não são prova automática de vulnerabilidade.
+- Heurísticas estáticas para programas **Solana/Anchor** (Rust): contas de autoridade sem `Signer`/constraint, `AccountInfo`/`UncheckedAccount` sem `/// CHECK`, PDA com `seeds` sem `bump`, `invoke`/`invoke_signed` e operações de token SPL para revisão de autoridade/CPI, aritmética sem `checked_`, `init_if_needed`, fechamento/saque manual de lamports, dependência de tempo (TGE/vesting) e `Cargo.toml` sem `overflow-checks`. São indicadores para auditoria manual, não vulnerabilidades confirmadas.
 - Verificação web passiva: HTTPS e certificado TLS, cabeçalhos de segurança (incluindo CSP permissiva e HSTS fraco), proteção contra enquadramento, CORS (curinga, reflexão de origem e `null` com credenciais), divulgação de tecnologia e atributos de cookies. Não explora falhas, não faz fuzzing e não tenta autenticação.
 - Relatórios JSON, Markdown e **SARIF 2.1.0** (aba Security do GitHub), ordenados por severidade e com triagem por política.
 - Integração opcional com OpenAI API para explicar achados existentes; a IA não executa testes nem inventa evidências.
@@ -102,8 +103,11 @@ A chave não deve ser commitada. O módulo de IA envia somente os achados resumi
 ## Analisar código
 - Escolha “Pasta local” e informe o caminho absoluto para a pasta do repositório, ou
 - Escolha “Upload ZIP” e envie um arquivo ZIP de código.
-- O app executa verificações básicas próprias, heurísticas JS/TS e os scanners instalados.
+- O app executa verificações básicas próprias, heurísticas JS/TS, heurísticas Solana/Anchor (arquivos `.rs` e `Cargo.toml`) e os scanners instalados.
 - Faça revisão humana antes de tratar qualquer resultado como vulnerabilidade confirmada.
+
+### Auditar programas Solana/Anchor
+Aponte a análise para o repositório do programa (código-fonte, `Cargo.toml`, testes) que você tem autorização para auditar — nunca é feita qualquer interação com a mainnet. As heurísticas cobrem o checklist típico: verificação de signatário/autoridade, substituição de contas, validação de PDA, manipulação de CPI, aritmética, inicialização/encerramento de contas e sequenciamento. Cada achado é apenas um indicador: confirme assinaturas, constraints, PDAs e o impacto concreto antes de reportar, como exige um programa de divulgação responsável.
 
 ## Analisar site
 - Informe um endereço HTTPS/HTTP de um site sob sua responsabilidade.
