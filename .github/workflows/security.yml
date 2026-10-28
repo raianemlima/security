@@ -59,7 +59,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Run OSV-Scanner
-        uses: google/osv-scanner-action/osv-scanner-action@90b209d0ea55cea1da9fc0c4e65782cc6acb6e2e # v2.2.2
+        uses: google/osv-scanner-action/osv-scanner-action@b1d267aea5211fa648d9d442fa64b90dbdcbdd36 # v2.7.0
         with:
           scan-args: |-
             --recursive
