@@ -30,6 +30,13 @@ def triage_finding(finding: dict, profile: str = "generic") -> dict:
     status = "needs_manual_review"
     reason = "Indicador automatizado; valide o contexto e o impacto antes de reportar."
 
+    if title in HEADER_TITLES or "cabeçalho ausente:" in evidence:
+        # A missing defensive header is not, by itself, evidence of an exploitable flaw.
+        if title == "content security policy ausente" and result.get("severity") == "Medium":
+            result["severity"] = "Low"
+            result["severity_note"] = "Severidade reduzida: CSP ausente, isoladamente, não demonstra XSS ou impacto explorável."
+        status = "needs_manual_review"
+        reason = "Cabeçalho ausente é uma observação de hardening, não prova isolada de vulnerabilidade."
     if title in SERVER_TITLES or "server:" in evidence:
         status = "not_reportable_as_is"
         reason = "Divulgação do cabeçalho Server, isoladamente, não demonstra impacto de segurança."
@@ -39,9 +46,6 @@ def triage_finding(finding: dict, profile: str = "generic") -> dict:
     elif title in FRAME_TITLES or "x-frame-options ausente" in evidence:
         status = "needs_impact_validation"
         reason = "A ausência de proteção contra enquadramento não prova clickjacking; confirme ações sensíveis e impacto."
-    elif title in HEADER_TITLES or "cabeçalho ausente:" in evidence:
-        status = "needs_manual_review"
-        reason = "Cabeçalho ausente é uma observação de hardening, não prova isolada de vulnerabilidade."
 
     if profile == "hackerone-bcny":
         if title in HEADER_TITLES or "cabeçalho ausente:" in evidence:
