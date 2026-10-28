@@ -5,3 +5,4 @@ reports/
 uploads/
 *.pyc
 .streamlit/secrets.toml
+*.sarif

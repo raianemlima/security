@@ -61,3 +61,22 @@ def test_report_includes_triage_and_deduplicates_identical_observations():
     markdown = findings_to_markdown(report)
     assert "### Triagem" in markdown
     assert "Não reportável como está" in markdown
+
+
+def test_code_evidence_mentioning_server_is_not_hidden_as_server_banner():
+    # Regression: substring matching on "server:" used to mark real code findings as not reportable.
+    result = triage_finding({
+        "title": "Hardcoded credential in config", "severity": "High", "source": "Semgrep",
+        "evidence": "server: {host: db, password: hunter2hunter2}",
+    })
+    assert result["triage_status"] == "needs_manual_review"
+
+
+def test_new_web_titles_are_triaged():
+    reflected = triage_finding({"title": "CORS reflete origem arbitrária", "severity": "Medium"})
+    powered_by = triage_finding({"title": "Cabeçalho X-Powered-By divulgado", "severity": "Info",
+                                 "evidence": "X-Powered-By: PHP/7.4"})
+    weak_csp = triage_finding({"title": "Content Security Policy permissiva", "severity": "Low"}, "hackerone-bcny")
+    assert reflected["triage_status"] == "needs_impact_validation"
+    assert powered_by["triage_status"] == "not_reportable_as_is"
+    assert weak_csp["triage_status"] == "not_reportable_as_is"

@@ -1,0 +1,16 @@
+version: 2
+updates:
+  # The cooldown waits 7 days before proposing a new release, so a hijacked or
+  # malicious version is usually caught and yanked before it reaches this repo.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
