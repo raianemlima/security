@@ -17,7 +17,7 @@ def make_report(target_type, target, findings, meta):
         "note": "Triagem heurística; não confirma explorabilidade nem substitui revisão humana."
     }
     return {
-        "schema_version": "1.1",
+        "schema_version": "1.0",
         "tool": "VulnAgent",
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "target_type": target_type,
