@@ -53,3 +53,16 @@ def test_site_mode_rejects_credential_headers_before_any_request():
     at.text_area[0].input("Authorization: Bearer abc")
     at.button[0].click().run()
     assert "Authorization não é permitido" in at.error[0].value
+
+
+def test_feed_mode_analyzes_pasted_json():
+    at = AppTest.from_file(APP, default_timeout=30).run()
+    at.sidebar.radio[0].set_value("Feed JSON (odds)").run()
+    feed = ('{"feed":[{"sportId":18,"matches":[{"id":1,"slug":"a-vs-b",'
+            '"liveTrackerUrl":"https://proxy.example/p/https://tracker.example/get/1?s=1",'
+            '"oddGroups":[]}]}]}')
+    at.text_area[0].input(feed).run()
+    at.button[0].click().run()
+    assert not at.exception
+    labels = " ".join(e.label for e in at.expander)
+    assert "open redirect/SSRF" in labels or "Proxy com URL embutida" in labels

@@ -10,7 +10,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from vuln_agent.analysis import analyze_code, analyze_site
+from vuln_agent.analysis import analyze_code, analyze_feed, analyze_site
 from vuln_agent.inputs import pick_scan_root, resolve_local_path, safe_extract_zip
 from vuln_agent.reporting import findings_to_markdown, findings_to_sarif, severity_rank
 from vuln_agent.web import extra_headers_from_env, parse_extra_headers
@@ -30,7 +30,9 @@ def build_parser() -> argparse.ArgumentParser:
     site.add_argument("-H", "--header", action="append", default=[], metavar="'Nome: valor'",
                       help="Cabeçalho de identificação exigido pelo programa (repetível). "
                            "Padrão: VULNAGENT_EXTRA_HEADERS.")
-    for command in (code, site):
+    feed = sub.add_parser("feed", help="Analisa um JSON de feed de odds já capturado (passivo).")
+    feed.add_argument("path", help="Arquivo .json do feed (ou '-' para ler da entrada padrão)")
+    for command in (code, site, feed):
         command.add_argument("-f", "--format", choices=("markdown", "json", "sarif"), default="markdown")
         command.add_argument("-o", "--output", help="Arquivo de saída (padrão: saída padrão).")
         command.add_argument("--fail-on", choices=tuple(FAIL_LEVELS), default="none",
@@ -70,6 +72,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "code":
             report = _analyze_code_path(Path(args.path))
+        elif args.command == "feed":
+            text = sys.stdin.read() if args.path == "-" else Path(args.path).read_text(encoding="utf-8")
+            report = analyze_feed(text, None if args.path == "-" else Path(args.path).name)
         else:
             headers = parse_extra_headers(args.header) if args.header else extra_headers_from_env()
             report = analyze_site(args.url, headers)
