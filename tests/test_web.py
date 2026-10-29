@@ -214,3 +214,13 @@ def test_parse_extra_headers():
         web.parse_extra_headers(["X-Test: ok\r\nCookie: stolen=1"])
     with pytest.raises(ValueError):
         web.parse_extra_headers([f"X-H{i}: v" for i in range(web.MAX_EXTRA_HEADERS + 1)])
+
+
+def test_module_imports_even_if_urllib3_internals_missing(monkeypatch):
+    # Simulate a deployment with an unexpected urllib3: the module and its pure-Python helpers
+    # must keep working so app.py never white-screens; only the site scan should complain.
+    monkeypatch.setattr(web, "_URLLIB3_IMPORT_ERROR", ImportError("cannot import name 'NameResolutionError'"))
+    assert web.parse_extra_headers("X-Research: alice") == {"X-Research": "alice"}
+    assert web.is_public_ip(ipaddress.ip_address("93.184.216.34"))
+    with pytest.raises(RuntimeError, match="urllib3"):
+        web.public_only_session()

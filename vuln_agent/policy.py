@@ -48,6 +48,8 @@ def detect_policy_profile(target: str) -> str:
 def triage_finding(finding: dict, profile: str = "generic") -> dict:
     """Return a copy annotated with triage; never claims exploitability."""
     result = dict(finding)
+    preset_status = finding.get("triage_status")
+    preset_reason = finding.get("triage_reason")
     title = str(result.get("title", "")).strip().casefold()
     # Evidence markers only count for non-code sources and at the start of the evidence (the
     # format the web scanner emits); otherwise a code snippet containing e.g. "server:" would
@@ -120,6 +122,13 @@ def triage_finding(finding: dict, profile: str = "generic") -> dict:
     if title in NOTICE_TITLES:
         status = "not_reportable_as_is"
         reason = "Aviso sobre a qualidade da análise, não uma vulnerabilidade: os cabeçalhos observados podem não ser os do site."
+
+    # Findings from non-web scanners (code, feed) may ship their own triage; the web-header
+    # rules above do not apply to them, so keep the status the scanner assigned.
+    web_related = is_header or is_weak_header or is_server or is_cors or is_frame or is_cookie or title in NOTICE_TITLES
+    if not web_related and preset_status:
+        status = preset_status
+        reason = preset_reason or reason
 
     result["triage_status"] = status
     result["triage_reason"] = reason

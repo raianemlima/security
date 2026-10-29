@@ -4,7 +4,7 @@ import streamlit as st
 from dotenv import load_dotenv
 
 from vuln_agent.ai_review import explain_findings
-from vuln_agent.analysis import analyze_code, analyze_site
+from vuln_agent.analysis import analyze_code, analyze_feed, analyze_site
 from vuln_agent.inputs import allowed_roots_from_env, local_path_enabled, pick_scan_root, resolve_local_path, safe_extract_zip
 from vuln_agent.reporting import SEVERITY_ORDER, findings_to_markdown, findings_to_sarif, severity_counts
 from vuln_agent.web import parse_extra_headers
@@ -30,13 +30,14 @@ def set_report(report):
 with st.sidebar:
     st.header("Escopo autorizado")
     st.warning("Use somente código próprio ou sites para os quais você tem autorização expressa.")
-    mode = st.radio("Tipo de análise", ["Código / repositório", "Site web"])
+    mode = st.radio("Tipo de análise", ["Código / repositório", "Site web", "Feed JSON (odds)"])
     st.divider()
     st.write("Scanners disponíveis")
     st.write("Semgrep:", "✅" if shutil.which("semgrep") else "— não instalado")
     st.write("OSV-Scanner:", "✅" if shutil.which("osv-scanner") else "— não instalado")
     st.write("Análise estática JS/TS:", "✅ integrada")
     st.write("Análise estática Solana/Anchor:", "✅ integrada")
+    st.write("Análise de feed JSON (odds):", "✅ integrada")
     st.write("Detecção de segredos:", "✅ integrada (valores mascarados)")
     st.write("IA:", "✅ configurada" if os.getenv("OPENAI_API_KEY") else "— opcional")
 
@@ -74,6 +75,21 @@ if mode == "Código / repositório":
                             set_report(analyze_code(pick_scan_root(temp_dir), uploaded.name))
                 except (zipfile.BadZipFile, ValueError, OSError) as e:
                     st.error(f"Não foi possível analisar o ZIP: {e}")
+elif mode == "Feed JSON (odds)":
+    st.subheader("Análise passiva de feed JSON")
+    st.info("Cole um JSON de feed de odds já capturado da sua própria sessão. A análise é offline: "
+            "extrai domínios de terceiros, URLs ocultas em base64, proxies com URL embutida e a margem "
+            "por mercado. Nenhuma requisição de rede é feita. Um feed público não é, por si só, vulnerabilidade.")
+    feed_text = st.text_area("JSON do feed", height=260, placeholder='{"feed": [ ... ]}')
+    if st.button("Analisar feed", type="primary"):
+        if not feed_text.strip():
+            st.error("Cole o JSON do feed.")
+        else:
+            try:
+                with st.spinner("Analisando o feed offline..."):
+                    set_report(analyze_feed(feed_text))
+            except ValueError as e:
+                st.error(str(e))
 else:
     st.subheader("Verificação passiva de site")
     url = st.text_input("URL do site autorizado", placeholder="https://meu-dominio.example")

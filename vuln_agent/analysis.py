@@ -6,6 +6,7 @@ from pathlib import Path
 from vuln_agent.js_security import scan_javascript_patterns
 from vuln_agent.reporting import make_report
 from vuln_agent.scanners import scan_code
+from vuln_agent.feed_analysis import analyze_feed_json
 from vuln_agent.solana_security import scan_solana_programs
 from vuln_agent.web import scan_site, validate_site_url
 
@@ -23,3 +24,8 @@ def analyze_site(url: str, extra_headers: dict[str, str] | None = None) -> dict:
     safe_url = validate_site_url(url)
     findings, meta = scan_site(safe_url, extra_headers)
     return make_report("site", safe_url, findings, meta)
+
+
+def analyze_feed(text: str, target_label: str | None = None) -> dict:
+    findings, meta = analyze_feed_json(text)
+    return make_report("feed", target_label or "feed", findings, meta)
